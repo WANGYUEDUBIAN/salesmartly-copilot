@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "SaleSmartly Message Listener",
+  "version": "1.0.0",
+  "description": "监听 SaleSmartly 页面中的实时对话消息",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "https://dashscope.aliyuncs.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://app.salesmartly.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "SaleSmartly 监听器"
+  },
+  "icons": {},
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js"],
+      "matches": ["https://app.salesmartly.com/*"]
+    }
+  ]
+}
