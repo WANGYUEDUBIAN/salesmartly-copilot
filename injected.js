@@ -60,6 +60,19 @@
     return origFetch.apply(this, arguments).then(function (response) {
       try {
         var url = typeof input === "string" ? input : (input.url || "");
+        if (url.includes("get-user-info")) {
+          console.log("[SS-Listener] FETCH get-user-info 命中!");
+          var clonedUser = response.clone();
+          clonedUser.json().then(function (json) {
+            console.log("[SS-Listener] 用户信息 (fetch):", json.data ? json.data.name : "无数据");
+            window.postMessage({
+              type: "__ss_user_info",
+              url: url,
+              data: json,
+              timestamp: Date.now(),
+            }, "*");
+          }).catch(function (e) { console.error("[SS-Listener] fetch user-info JSON解析失败:", e); });
+        }
         if (url.includes("get-message-list")) {
           console.log("[SS-Listener] FETCH get-message-list 命中!");
           var cloned = response.clone();
@@ -90,6 +103,21 @@
   XMLHttpRequest.prototype.send = function (body) {
     var self = this;
     var url = this.__ssUrl || "";
+    if (url.includes("get-user-info")) {
+      console.log("[SS-Listener] XHR get-user-info 命中!", url);
+      this.addEventListener("load", function () {
+        try {
+          var json = JSON.parse(self.responseText);
+          console.log("[SS-Listener] 用户信息 (xhr):", json.data ? json.data.name : "无数据");
+          window.postMessage({
+            type: "__ss_user_info",
+            url: url,
+            data: json,
+            timestamp: Date.now(),
+          }, "*");
+        } catch (e) { console.error("[SS-Listener] XHR user-info JSON解析失败:", e); }
+      });
+    }
     if (url.includes("get-message-list")) {
       console.log("[SS-Listener] XHR get-message-list 命中!", url);
       this.addEventListener("load", function () {

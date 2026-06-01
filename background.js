@@ -11,6 +11,9 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === "ws_message" || msg.action === "ws_send" || msg.action === "api_messages" || msg.action === "api_translate") {
     saveMessage(msg);
   }
+  if (msg.action === "user_info") {
+    saveUserInfo(msg);
+  }
   if (msg.action === "get_messages") {
     getMessages(msg.limit || 200).then(sendResponse);
     return true;
@@ -26,6 +29,12 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === "get_ai_suggestions") {
     getAISuggestions(msg.chatUserId).then(sendResponse).catch(function (e) {
       sendResponse({ error: e.message || "AI请求失败" });
+    });
+    return true;
+  }
+  if (msg.action === "get_user_info") {
+    chrome.storage.local.get(["userInfo"], function (result) {
+      sendResponse(result.userInfo || null);
     });
     return true;
   }
@@ -204,6 +213,46 @@ function simpleHash(str) {
   return hash.toString(36);
 }
 
+async function saveUserInfo(msg) {
+  if (!msg.data || !msg.data.data) return;
+  var data = msg.data.data;
+  var chatUserId = data.chat_user_id;
+  if (!chatUserId) return;
+
+  var result = await chrome.storage.local.get(["userInfos"]);
+  var userInfos = result.userInfos || {};
+
+  userInfos[chatUserId] = {
+    chatUserId: chatUserId,
+    name: data.name || "",
+    nickname: data.nickname || "",
+    phone: data.phone || "",
+    phone_number: data.phone_number || "",
+    area_code: data.area_code || "",
+    email: (data.channel_info && data.channel_info.content) ? (JSON.parse(data.channel_info.content).email || "") : "",
+    country: data.country || "",
+    channel: CHANNEL_MAP[String(data.channel)] || "ch_" + data.channel,
+    channel_name: data.channel_name || "",
+    remark: data.remark || "",
+    labels: (data.labels || []).map(function (l) { return l.label_name; }),
+    avatar: (data.channel_info && data.channel_info.avatar) || "",
+    translate_language: data.translate_language || "",
+    chat_session_code: data.chat_session_code || "",
+    session_id: data.session_id || "",
+    ad_referral: data.channel_info && data.channel_info.ad_referral ? {
+      source: data.channel_info.ad_referral.source || "",
+      ad_title: data.channel_info.ad_referral.ad_title || "",
+      ad_link: data.channel_info.ad_referral.ad_link || "",
+    } : null,
+    raw: data,
+    timestamp: Date.now(),
+    savedAt: new Date().toLocaleString("zh-CN"),
+  };
+
+  // 同时保存为"当前用户信息"
+  await chrome.storage.local.set({ userInfos: userInfos, userInfo: userInfos[chatUserId] });
+}
+
 async function getMessages(limit) {
   var result = await chrome.storage.local.get(["messages"]);
   var messages = result.messages || [];
@@ -242,15 +291,17 @@ async function getAISuggestions(chatUserId) {
 
   if (chatMsgs.length === 0) return { error: "没有对话记录" };
 
-  // 按时间排序，取最近 20 条
+  // 按时间排序，取最近 40 条
   chatMsgs.sort(function (a, b) { return (a.timestamp || 0) - (b.timestamp || 0); });
-  var recent = chatMsgs.slice(-20);
+  var recent = chatMsgs.slice(-40);
 
-  // 获取上下文信息
+  // 获取上下文信息（只从客户消息取客户名）
   var customerName = "";
   var channel = "";
   for (var j = recent.length - 1; j >= 0; j--) {
-    if (!customerName && recent[j].customer_name) customerName = recent[j].customer_name;
+    if (!customerName && recent[j].sender === "customer" && recent[j].customer_name) {
+      customerName = recent[j].customer_name;
+    }
     if (!channel && recent[j].channel) channel = recent[j].channel;
   }
 
@@ -266,7 +317,7 @@ async function getAISuggestions(chatUserId) {
   var contextText = "渠道: " + (channel || "未知") + "\n客户: " + (customerName || "未知") + "\n\n" + contextLines.join("\n");
 
   // 调用 AI API
-  var systemPrompt = "你是一个专业的旅游客服助手。根据对话上下文，请提供3条专业的回复建议。\n\n要求：\n1. 根据客户使用的语言自动用相同语言回复（客户说英语就回英语，说中文就回中文）\n2. 三条建议风格不同：第一条直接回答，第二条更热情详细，第三条可附带促销或追问\n3. 回复要专业、友好、有帮助\n4. 不要重复已经说过的内容\n5. 每条建议控制在2-4句话\n\n请严格按以下格式返回：\n建议1: ...\n建议2: ...\n建议3: ...";
+  var systemPrompt = "你是一个专业的旅游客服助手。根据对话上下文完成两个任务。\n\n任务一：分析客服在对话中的回复表现，指出哪些地方说得不够好、可以改进的地方。用中文给出2-3条具体建议，每条建议要指出具体哪句话有问题以及怎么改更好。\n\n任务二：根据对话上下文，提供3条专业的下一条回复建议。\n要求：\n1. 根据客户使用的语言自动用相同语言回复\n2. 三条建议风格不同：第一条直接回答，第二条更热情详细，第三条可附带促销或追问\n3. 回复要专业、友好、有帮助\n4. 不要重复已经说过的内容\n5. 每条建议控制在2-4句话\n6. 每条建议后面附上中文翻译\n\n请严格按以下格式返回：\n【客服表现分析】\n分析: [中文分析内容，可以多行]\n\n【回复建议】\n建议1: [回复内容]\n中文: [中文翻译]\n建议2: [回复内容]\n中文: [中文翻译]\n建议3: [回复内容]\n中文: [中文翻译]";
 
   var response = await fetch(AI_API_URL, {
     method: "POST",
@@ -293,26 +344,55 @@ async function getAISuggestions(chatUserId) {
   var data = await response.json();
   var aiContent = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
 
-  // 解析3条建议
+  // 解析 AI 返回内容（分离客服分析和回复建议）
+  var analysis = "";
   var suggestions = [];
   var lines = aiContent.split("\n");
-  var current = null;
+  var section = ""; // "analysis" or "suggestions"
+  var currentText = null;
+  var currentZh = null;
+
   for (var l = 0; l < lines.length; l++) {
     var line = lines[l].trim();
-    if (line.match(/^建议[123][：:]/)) {
-      if (current) suggestions.push(current);
-      current = line.replace(/^建议[123][：:]\s*/, "");
-    } else if (current && line) {
-      current += "\n" + line;
+    if (line.match(/【客服表现分析】/)) {
+      section = "analysis";
+      continue;
+    }
+    if (line.match(/【回复建议】/)) {
+      section = "suggestions";
+      continue;
+    }
+    if (section === "analysis") {
+      if (line.match(/^分析[：:]/)) {
+        analysis += line.replace(/^分析[：:]\s*/, "") + "\n";
+      } else if (line) {
+        analysis += line + "\n";
+      }
+    }
+    if (section === "suggestions") {
+      if (line.match(/^建议[123][：:]/)) {
+        if (currentText) suggestions.push({ reply: currentText, zh: currentZh || "" });
+        currentText = line.replace(/^建议[123][：:]\s*/, "");
+        currentZh = null;
+      } else if (line.match(/^中文[：:]/)) {
+        currentZh = line.replace(/^中文[：:]\s*/, "");
+      } else if (currentZh !== null && line) {
+        currentZh += "\n" + line;
+      } else if (currentText !== null && line) {
+        currentText += "\n" + line;
+      }
     }
   }
-  if (current) suggestions.push(current);
+  if (currentText) suggestions.push({ reply: currentText, zh: currentZh || "" });
+  analysis = analysis.trim();
 
   return {
+    analysis: analysis,
     suggestions: suggestions,
     context: contextText,
     customerName: customerName,
     channel: channel,
     chatUserId: chatUserId || (recent.length > 0 ? recent[0].chat_user_id : ""),
+    savedAt: new Date().toLocaleString("zh-CN"),
   };
 }

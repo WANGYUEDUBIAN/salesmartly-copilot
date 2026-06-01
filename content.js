@@ -78,6 +78,16 @@
         pageUrl: window.location.href,
       });
     }
+
+    if (msg.type === "__ss_user_info") {
+      chrome.runtime.sendMessage({
+        action: "user_info",
+        url: msg.url,
+        data: msg.data,
+        timestamp: msg.timestamp,
+        pageUrl: window.location.href,
+      });
+    }
   });
 
   // ========== 3. MutationObserver DOM 监听（备用方案） ==========
