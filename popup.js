@@ -49,18 +49,39 @@ function initUserInfo() {
   document.getElementById("btnGetUser").addEventListener("click", function () {
     var btn = document.getElementById("btnGetUser");
     btn.disabled = true;
-    btn.textContent = "抓取中...";
-    document.getElementById("userInfoContent").innerHTML = '<div class="loading" style="padding:10px;">请在 SaleSmartly 中打开一个客户对话，等待数据抓取...</div>';
+    btn.textContent = "处理中...";
+    document.getElementById("userInfoContent").innerHTML = '<div class="loading" style="padding:10px;">请先在 SaleSmartly 中打开一个客户对话...</div>';
 
-    // 先尝试加载已保存的数据
     chrome.runtime.sendMessage({ action: "get_user_info" }, function (resp) {
-      btn.disabled = false;
-      btn.textContent = "刷新客户信息";
-      if (resp && resp.name) {
-        renderUserInfo(resp);
-      } else {
-        document.getElementById("userInfoContent").innerHTML = '<div class="empty" style="padding:12px;"><div>暂无数据</div><div class="hint">请在 SaleSmartly 中点击打开一个客户对话</div></div>';
+      if (!resp || !resp.name) {
+        btn.disabled = false;
+        btn.textContent = "抓取并发送";
+        document.getElementById("userInfoContent").innerHTML = '<div class="empty" style="padding:12px;"><div>暂无客户数据</div><div class="hint">请先在 SaleSmartly 中打开一个客户对话</div></div>';
+        return;
       }
+
+      renderUserInfo(resp);
+
+      btn.textContent = "发送中...";
+      fetch("http://192.168.31.108:3000/api/quick-create-customer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: resp.name, remark: resp.remark || "" }),
+      }).then(function (r) {
+        return r.json();
+      }).then(function (data) {
+        btn.disabled = false;
+        btn.textContent = "抓取并发送";
+        var msgEl = document.getElementById("sendResultMsg");
+        if (msgEl) msgEl.textContent = "发送成功";
+        if (msgEl) msgEl.style.color = "#4caf50";
+      }).catch(function (e) {
+        btn.disabled = false;
+        btn.textContent = "抓取并发送";
+        var msgEl = document.getElementById("sendResultMsg");
+        if (msgEl) msgEl.textContent = "发送失败: " + e.message;
+        if (msgEl) msgEl.style.color = "#d32f2f";
+      });
     });
   });
 }
@@ -86,6 +107,7 @@ function renderUserInfo(info) {
   }
 
   html += '<div style="margin-top:6px;font-size:10px;color:#aaa;">抓取时间: ' + esc(info.savedAt || "") + '</div>';
+  html += '<div id="sendResultMsg" style="font-size:11px;margin-top:4px;"></div>';
   html += '</div>';
 
   document.getElementById("userInfoContent").innerHTML = html;

@@ -5,7 +5,8 @@
   "description": "监听 SaleSmartly 页面中的实时对话消息",
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
-    "https://dashscope.aliyuncs.com/*"
+    "https://dashscope.aliyuncs.com/*",
+    "http://192.168.31.108:3000/*"
   ],
   "background": {
     "service_worker": "background.js"
