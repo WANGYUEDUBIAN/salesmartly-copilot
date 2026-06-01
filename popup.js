@@ -5,6 +5,15 @@ document.addEventListener("DOMContentLoaded", function () {
   initUserInfo();
   checkStatus();
   loadCurrentSuggestions();
+
+  document.getElementById("btnClear").addEventListener("click", function () {
+    chrome.runtime.sendMessage({ action: "clear_all" }, function () {
+      document.getElementById("aiContent").innerHTML = '<div class="empty"><div>数据已清空</div></div>';
+      document.getElementById("aiInfo").textContent = "数据已清空";
+      document.getElementById("userInfoContent").innerHTML = "";
+      document.getElementById("statusText").textContent = "已清空";
+    });
+  });
 });
 
 // ==================== Tab 切换 ====================

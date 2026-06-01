@@ -22,6 +22,10 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     chrome.storage.local.set({ messages: [], fingerprints: [] }, function () { sendResponse({ status: "cleared" }); });
     return true;
   }
+  if (msg.action === "clear_all") {
+    chrome.storage.local.clear(function () { sendResponse({ status: "cleared" }); });
+    return true;
+  }
   if (msg.action === "export_messages") {
     getMessages().then(function (messages) { sendResponse({ messages: messages }); });
     return true;
@@ -262,8 +266,25 @@ async function getMessages(limit) {
 
 // ==================== AI 建议功能 ====================
 
-var AI_API_KEY = "sk-2ad8ac812dc54f4db62610cb520b9a56";
-var AI_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+// ====== 模型切换：改成 "gemini" 或 "qwen" ======
+var AI_PROVIDER = "gemini";
+
+var AI_CONFIGS = {
+  qwen: {
+    url: "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    key: "sk-2ad8ac812dc54f4db62610cb520b9a56",
+    model: "qwen-plus",
+  },
+  gemini: {
+    url: "http://192.168.31.220:7861/antigravity/v1/chat/completions",
+    key: "sk-pwd",
+    model: "gemini-3-flash-agent",
+  },
+};
+
+var AI_API_URL = AI_CONFIGS[AI_PROVIDER].url;
+var AI_API_KEY = AI_CONFIGS[AI_PROVIDER].key;
+var AI_API_MODEL = AI_CONFIGS[AI_PROVIDER].model;
 
 async function getAISuggestions(chatUserId) {
   var allMessages = await getMessages(500);
@@ -338,7 +359,7 @@ async function getAISuggestions(chatUserId) {
       "Authorization": "Bearer " + AI_API_KEY,
     },
     body: JSON.stringify({
-      model: "qwen-plus",
+      model: AI_API_MODEL,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: "对话上下文：\n" + contextText },

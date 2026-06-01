@@ -6,7 +6,8 @@
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
     "https://dashscope.aliyuncs.com/*",
-    "http://192.168.31.108:3000/*"
+    "http://192.168.31.108:3000/*",
+    "http://192.168.31.220:7861/*"
   ],
   "background": {
     "service_worker": "background.js"
