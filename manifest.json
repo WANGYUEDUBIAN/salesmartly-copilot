@@ -25,7 +25,7 @@
   "icons": {},
   "web_accessible_resources": [
     {
-      "resources": ["injected.js"],
+      "resources": ["injected.js", "skills.md"],
       "matches": ["https://app.salesmartly.com/*"]
     }
   ]
