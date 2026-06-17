@@ -448,8 +448,22 @@ async function saveMsgListTemplate(msg) {
     url: msg.url,
     method: msg.method || "POST",
     body: msg.body,
+    headers: msg.headers || {},
     savedAt: Date.now(),
   };
   await chrome.storage.local.set({ msgListTemplates: templates });
   console.log("[SS-Listener] 已存请求模板: chatUserId=" + chatUserId);
+}
+
+// 经 content/injected 在页面上下文分页重放 get-message-list，返回完整消息数组
+async function replayViaContent(template) {
+  var tabs = await chrome.tabs.query({ url: "https://app.salesmartly.com/*" });
+  if (!tabs.length) throw new Error("SaleSmartly 页面未打开");
+  return new Promise(function (resolve, reject) {
+    chrome.tabs.sendMessage(tabs[0].id, { action: "replay_msglist", template: template }, function (resp) {
+      if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
+      if (!resp || !resp.ok) return reject(new Error((resp && resp.error) || "重放失败"));
+      resolve(resp.list || []);
+    });
+  });
 }

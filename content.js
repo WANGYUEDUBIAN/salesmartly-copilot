@@ -95,6 +95,7 @@
         url: msg.url,
         method: msg.method,
         body: msg.body,
+        headers: msg.headers,
         timestamp: msg.timestamp,
       });
     }
@@ -206,6 +207,23 @@
     }
     if (msg.action === "ping") {
       sendResponse({ alive: true });
+    }
+    if (msg.action === "replay_msglist") {
+      window.postMessage({ type: "__ss_replay_msglist", template: msg.template }, "*");
+      var waitReplay = function (ev) {
+        if (ev.source !== window) return;
+        var r = ev.data;
+        if (r && r.type === "__ss_replay_msglist_result") {
+          window.removeEventListener("message", waitReplay);
+          sendResponse({ ok: r.ok, list: r.list, error: r.error });
+        }
+      };
+      window.addEventListener("message", waitReplay);
+      setTimeout(function () {
+        window.removeEventListener("message", waitReplay);
+        sendResponse({ ok: false, error: "重放超时(120s)" });
+      }, 120000);
+      return true; // 异步 sendResponse
     }
   });
 

@@ -54,6 +54,24 @@
   window.WebSocket.CLOSING = OrigWebSocket.CLOSING;
   window.WebSocket.CLOSED = OrigWebSocket.CLOSED;
 
+  // 把 fetch/XHR 的 headers 统一序列化为普通对象（录制请求头，重放时带回以通过鉴权）
+  function extractHeaders(h) {
+    var out = {};
+    if (!h) return out;
+    try {
+      if (typeof Headers !== "undefined" && h instanceof Headers) {
+        h.forEach(function (v, k) { out[k] = v; });
+      } else if (Array.isArray(h)) {
+        for (var i = 0; i < h.length; i++) {
+          if (Array.isArray(h[i])) out[h[i][0]] = h[i][1];
+        }
+      } else if (typeof h === "object") {
+        for (var k in h) { if (Object.prototype.hasOwnProperty.call(h, k)) out[k] = h[k]; }
+      }
+    } catch (e) {}
+    return out;
+  }
+
   // ==================== fetch 拦截 ====================
   var origFetch = window.fetch;
   window.fetch = function (input, init) {
@@ -79,11 +97,13 @@
           try {
             reqBody = init && init.body ? (typeof init.body === "string" ? init.body : JSON.stringify(init.body)) : null;
           } catch (e) {}
+          var reqHeaders = extractHeaders(init && init.headers);
           window.postMessage({
             type: "__ss_msglist_request",
             url: url,
             method: (init && init.method) || "GET",
             body: reqBody,
+            headers: reqHeaders,
             timestamp: Date.now(),
           }, "*");
           console.log("[SS-Listener] FETCH get-message-list 命中!");
@@ -106,11 +126,17 @@
   // ==================== XHR 拦截 ====================
   var origOpen = XMLHttpRequest.prototype.open;
   var origSendXHR = XMLHttpRequest.prototype.send;
+  var origSetReqHeader = XMLHttpRequest.prototype.setRequestHeader;
 
   XMLHttpRequest.prototype.open = function (method, url) {
     this.__ssUrl = url;
     this.__ssMethod = method;
     return origOpen.apply(this, arguments);
+  };
+
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    try { (this.__ssHeaders || (this.__ssHeaders = {}))[name] = value; } catch (e) {}
+    return origSetReqHeader.apply(this, arguments);
   };
 
   XMLHttpRequest.prototype.send = function (body) {
@@ -143,6 +169,7 @@
         url: url,
         method: self.__ssMethod || "GET",
         body: xhrReqBody,
+        headers: self.__ssHeaders || {},
         timestamp: Date.now(),
       }, "*");
       this.addEventListener("load", function () {
@@ -189,6 +216,64 @@
       return null;
     }
   }
+
+  // ==================== 分页重放（客户档案功能）====================
+  // SaleSmartly 的 get-message-list 实测为 GET + 游标分页：
+  //   - 游标参数 sequence_id，方向参数 direction_type（0/1），每页 page_size（默认20）
+  //   - 响应 data.next_pk = {chat_user_id, sequence_id} 为下一页游标；为空对象 {} 表示该方向到头
+  //   - 故从模板 sequence_id 起，向 direction_type=1/0 两个方向各追尽 next_pk，按 sequence_id 去重合并，即得完整历史。
+  // （计划原文假设 POST body + page 页码，与实测不符；此处按实测机制实现，即计划 Task3 Step4 所述「cursor 分页需调」。）
+  async function replayMsgList(template) {
+    if (!template || !template.url) throw new Error("无请求模板");
+    var base = new URL(template.url);
+    var anchorSeq = base.searchParams.get("sequence_id");
+    if (!anchorSeq) throw new Error("模板 URL 缺少 sequence_id");
+    var MAX_PAGES = 100; // 每方向兜底
+
+    var all = [];
+    var seen = Object.create(null); // 按 sequence_id 去重
+    var dirs = ["1", "0"];
+
+    for (var d = 0; d < dirs.length; d++) {
+      var dir = dirs[d];
+      var cursor = anchorSeq;
+      for (var page = 0; page < MAX_PAGES; page++) {
+        base.searchParams.set("sequence_id", cursor);
+        base.searchParams.set("direction_type", dir);
+        // 直接用原始 fetch，避免触发本脚本自身的请求录制/响应处理（防模板被覆盖、消息重复入库）
+        var resp = await origFetch(base.toString(), { method: "GET", headers: template.headers || {}, credentials: "include" });
+        if (!resp.ok) throw new Error("重放失败 HTTP " + resp.status);
+        var json = await resp.json();
+        var data = (json && json.data) ? json.data : {};
+        var list = data.list || [];
+        for (var i = 0; i < list.length; i++) {
+          var seq = list[i] && list[i].sequence_id;
+          if (seq && seen[seq]) continue;
+          if (seq) seen[seq] = true;
+          all.push(list[i]);
+        }
+        var nextSeq = data.next_pk && data.next_pk.sequence_id;
+        console.log("[SS-Listener] 重放 dir=" + dir + " 第" + (page + 1) + "页 +" + list.length + " 累计" + all.length + (nextSeq ? "" : " (该方向结束)"));
+        if (!nextSeq) break;      // next_pk 为空 → 该方向到头
+        if (!list.length) break;  // 空页 → 停止
+        cursor = nextSeq;
+      }
+    }
+    console.log("[SS-Listener] 重放完成: 共 " + all.length + " 条");
+    return all;
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window) return;
+    var m = event.data;
+    if (m && m.type === "__ss_replay_msglist") {
+      replayMsgList(m.template).then(function (list) {
+        window.postMessage({ type: "__ss_replay_msglist_result", ok: true, list: list, chatUserId: m.template.chatUserId }, "*");
+      }).catch(function (e) {
+        window.postMessage({ type: "__ss_replay_msglist_result", ok: false, error: e.message, chatUserId: m.template.chatUserId }, "*");
+      });
+    }
+  });
 
   console.log("[SS-Listener] 拦截已注入 (WS + fetch + XHR)");
 })();
