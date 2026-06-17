@@ -42,6 +42,9 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     });
     return true;
   }
+  if (msg.action === "msglist_request_template") {
+    saveMsgListTemplate(msg);
+  }
 });
 
 async function saveMessage(msg) {
@@ -428,4 +431,25 @@ async function getAISuggestions(chatUserId) {
     chatUserId: chatUserId || (recent.length > 0 ? recent[0].chat_user_id : ""),
     savedAt: new Date().toLocaleString("zh-CN"),
   };
+}
+
+async function saveMsgListTemplate(msg) {
+  var bodyObj = {};
+  try { bodyObj = msg.body ? JSON.parse(msg.body) : {}; } catch (e) { bodyObj = {}; }
+  var chatUserId = bodyObj.chat_user_id || bodyObj.chatUserId || "";
+  if (!chatUserId && msg.url) {
+    try { chatUserId = new URL(msg.url).searchParams.get("chat_user_id") || ""; } catch (e) {}
+  }
+  if (!chatUserId) return;
+  var result = await chrome.storage.local.get(["msgListTemplates"]);
+  var templates = result.msgListTemplates || {};
+  templates[chatUserId] = {
+    chatUserId: chatUserId,
+    url: msg.url,
+    method: msg.method || "POST",
+    body: msg.body,
+    savedAt: Date.now(),
+  };
+  await chrome.storage.local.set({ msgListTemplates: templates });
+  console.log("[SS-Listener] 已存请求模板: chatUserId=" + chatUserId);
 }

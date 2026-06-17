@@ -74,6 +74,18 @@
           }).catch(function (e) { console.error("[SS-Listener] fetch user-info JSON解析失败:", e); });
         }
         if (url.includes("get-message-list")) {
+          // ===== 录制请求模板（供档案功能分页重放）=====
+          var reqBody = null;
+          try {
+            reqBody = init && init.body ? (typeof init.body === "string" ? init.body : JSON.stringify(init.body)) : null;
+          } catch (e) {}
+          window.postMessage({
+            type: "__ss_msglist_request",
+            url: url,
+            method: (init && init.method) || "GET",
+            body: reqBody,
+            timestamp: Date.now(),
+          }, "*");
           console.log("[SS-Listener] FETCH get-message-list 命中!");
           var cloned = response.clone();
           cloned.json().then(function (json) {
@@ -97,6 +109,7 @@
 
   XMLHttpRequest.prototype.open = function (method, url) {
     this.__ssUrl = url;
+    this.__ssMethod = method;
     return origOpen.apply(this, arguments);
   };
 
@@ -120,6 +133,18 @@
     }
     if (url.includes("get-message-list")) {
       console.log("[SS-Listener] XHR get-message-list 命中!", url);
+      // ===== 录制请求模板 =====
+      var xhrReqBody = null;
+      try {
+        xhrReqBody = body ? (typeof body === "string" ? body : (body.toString ? body.toString() : null)) : null;
+      } catch (e) {}
+      window.postMessage({
+        type: "__ss_msglist_request",
+        url: url,
+        method: self.__ssMethod || "GET",
+        body: xhrReqBody,
+        timestamp: Date.now(),
+      }, "*");
       this.addEventListener("load", function () {
         try {
           var json = JSON.parse(self.responseText);
