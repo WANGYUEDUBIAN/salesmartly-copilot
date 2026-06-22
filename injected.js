@@ -275,5 +275,48 @@
     }
   });
 
+  // ==================== 填写备注栏（客户档案功能）====================
+  // 实测 SaleSmartly 客户备注栏为 <textarea placeholder="请输入客户备注" class="arco-textarea">（Arco Design 受控组件）
+  var REMARK_SELECTORS = [
+    'textarea[placeholder*="客户备注"]',
+    'textarea[placeholder*="备注"]',
+    'textarea[placeholder*="remark" i]',
+    'textarea[class*="remark" i]',
+    'textarea[class*="note" i]',
+  ];
+
+  function findRemarkEl() {
+    for (var i = 0; i < REMARK_SELECTORS.length; i++) {
+      try { var el = document.querySelector(REMARK_SELECTORS[i]); if (el) return el; } catch (e) {}
+    }
+    return null;
+  }
+
+  function setNativeValue(el, value) {
+    var proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+    var setter = Object.getOwnPropertyDescriptor(proto, "value").set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function fillRemark(text) {
+    var el = findRemarkEl();
+    if (!el) return false;
+    try { el.focus(); } catch (e) {}
+    setNativeValue(el, text);
+    try { el.blur(); } catch (e) {}
+    return true;
+  }
+
+  window.addEventListener("message", function (event) {
+    if (event.source !== window) return;
+    var m = event.data;
+    if (m && m.type === "__ss_fill_remark") {
+      var ok = fillRemark(m.text);
+      window.postMessage({ type: "__ss_fill_remark_result", ok: ok, timestamp: Date.now() }, "*");
+    }
+  });
+
   console.log("[SS-Listener] 拦截已注入 (WS + fetch + XHR)");
 })();

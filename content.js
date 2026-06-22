@@ -225,6 +225,23 @@
       }, 120000);
       return true; // 异步 sendResponse
     }
+    if (msg.action === "fill_remark") {
+      window.postMessage({ type: "__ss_fill_remark", text: msg.text }, "*");
+      var waitFill = function (ev) {
+        if (ev.source !== window) return;
+        var r = ev.data;
+        if (r && r.type === "__ss_fill_remark_result") {
+          window.removeEventListener("message", waitFill);
+          sendResponse({ ok: r.ok });
+        }
+      };
+      window.addEventListener("message", waitFill);
+      setTimeout(function () {
+        window.removeEventListener("message", waitFill);
+        sendResponse({ ok: false });
+      }, 5000);
+      return true;
+    }
   });
 
   // 自动启动 DOM Observer
