@@ -242,7 +242,37 @@
       }, 5000);
       return true;
     }
+    if (msg.action === "show_loading") {
+      showLoadingBanner(msg.text || "处理中...");
+    }
+    if (msg.action === "hide_loading") {
+      hideLoadingBanner();
+    }
   });
+
+  // ==================== 页面加载指示横幅（自动模式用）====================
+  var __ssLoadingBanner = null;
+  function showLoadingBanner(text) {
+    if (!document.body) return;
+    if (__ssLoadingBanner) {
+      var span = __ssLoadingBanner.querySelector("span:last-child");
+      if (span) span.textContent = text;
+      return;
+    }
+    if (!document.getElementById("__ss_spin_style")) {
+      var st = document.createElement("style");
+      st.id = "__ss_spin_style";
+      st.textContent = "@keyframes __ss_spin { to { transform: rotate(360deg); } }";
+      (document.head || document.documentElement).appendChild(st);
+    }
+    __ssLoadingBanner = document.createElement("div");
+    __ssLoadingBanner.style.cssText = "position:fixed;top:12px;right:12px;z-index:2147483647;background:#1a73e8;color:#fff;padding:8px 14px;border-radius:6px;font-size:13px;font-family:-apple-system,sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.3);display:flex;align-items:center;gap:8px;";
+    __ssLoadingBanner.innerHTML = '<span style="display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:__ss_spin .8s linear infinite;"></span><span>' + text + '</span>';
+    document.body.appendChild(__ssLoadingBanner);
+  }
+  function hideLoadingBanner() {
+    if (__ssLoadingBanner) { __ssLoadingBanner.remove(); __ssLoadingBanner = null; }
+  }
 
   // 自动启动 DOM Observer
   startDOMObserver();

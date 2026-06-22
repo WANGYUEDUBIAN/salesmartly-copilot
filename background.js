@@ -461,6 +461,47 @@ async function saveMsgListTemplate(msg) {
   };
   await chrome.storage.local.set({ msgListTemplates: templates });
   console.log("[SS-Listener] 已存请求模板: chatUserId=" + chatUserId);
+  maybeAutoProfile(chatUserId); // 自动模式：模板就绪后尝试自动生成+填入（异步，不阻塞）
+}
+
+// 给 SaleSmartly 标签的 content script 发消息（无需返回值）
+function sendToContent(message) {
+  return new Promise(function (resolve) {
+    chrome.tabs.query({ url: "https://app.salesmartly.com/*" }, function (tabs) {
+      if (!tabs.length) return resolve(null);
+      chrome.tabs.sendMessage(tabs[0].id, message, function () { resolve(null); });
+    });
+  });
+}
+
+var _lastAutoChatUserId = "";
+
+// 自动模式：点进新客户（模板已录到）时，自动生成档案并填入备注栏
+async function maybeAutoProfile(chatUserId) {
+  var mode = await chrome.storage.local.get(["autoMode"]);
+  if (!mode.autoMode) return;
+  if (!chatUserId || chatUserId === _lastAutoChatUserId) return;
+  _lastAutoChatUserId = chatUserId;
+  await sendToContent({ action: "show_loading", text: "正在生成客户档案..." });
+  try {
+    var profile = await getCustomerProfile(chatUserId);
+    // 只在仍停留在该客户时才填入（切走了就不填，避免把别人档案填到当前客户）
+    var ui = await chrome.storage.local.get(["userInfo"]);
+    var currentId = ui.userInfo && ui.userInfo.chatUserId;
+    if (currentId !== chatUserId) {
+      console.log("[SS-Listener] 已切走(" + currentId + ")，跳过自动填入(" + chatUserId + ")");
+    } else if (profile && profile.rawText) {
+      await chrome.storage.local.set({ profileCurrent: profile });
+      await sendToContent({ action: "fill_remark", text: profile.rawText });
+      console.log("[SS-Listener] 自动填入完成: " + chatUserId);
+    } else {
+      console.log("[SS-Listener] 自动生成无结果: " + chatUserId, profile);
+    }
+  } catch (e) {
+    console.error("[SS-Listener] 自动生成失败:", e);
+  } finally {
+    await sendToContent({ action: "hide_loading" });
+  }
 }
 
 // 经 content/injected 在页面上下文分页重放 get-message-list，返回完整消息数组
