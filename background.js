@@ -7,6 +7,8 @@ var CHANNEL_MAP = {
   "14": "Shopee", "15": "Lazada",
 };
 
+var DEFAULT_FIELDS = "国籍\n出发地\n机票是否需要代订 (是/否)\n签证是否需要代订 (是/否)\n是否首次来华 (是/否)\n人数房型年龄\n出行日期\n游玩天数\n旅行城市(行程)\n导游(语言)\n交通";
+
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === "ws_message" || msg.action === "ws_send" || msg.action === "api_messages" || msg.action === "api_translate") {
     saveMessage(msg);
@@ -44,6 +46,12 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   }
   if (msg.action === "msglist_request_template") {
     saveMsgListTemplate(msg);
+  }
+  if (msg.action === "get_customer_profile") {
+    getCustomerProfile(msg.chatUserId).then(sendResponse).catch(function (e) {
+      sendResponse({ error: e.message || "档案生成失败" });
+    });
+    return true;
   }
 });
 
@@ -466,4 +474,128 @@ async function replayViaContent(template) {
       resolve(resp.list || []);
     });
   });
+}
+
+function normLabel(s) {
+  return String(s).replace(/\s*\([^)]*\)\s*$/, "").trim();
+}
+
+function parseProfileFields(text, fieldsText) {
+  var labels = fieldsText.split("\n").map(function (l) { return normLabel(l); }).filter(Boolean);
+  var fields = {};
+  labels.forEach(function (l) { fields[l] = "未提及"; });
+  for (var i = 0; i < text.split("\n").length; i++) {
+    var m = text.split("\n")[i].trim().match(/^(.+?)[:：]\s*(.+)$/);
+    if (m) {
+      var label = normLabel(m[1]);
+      var value = m[2].trim();
+      if (fields.hasOwnProperty(label)) fields[label] = value;
+    }
+  }
+  return fields;
+}
+
+async function getCustomerProfile(chatUserId) {
+  // 1. 解析 chatUserId
+  if (!chatUserId) {
+    var ui = await chrome.storage.local.get(["userInfo"]);
+    chatUserId = ui.userInfo && ui.userInfo.chatUserId;
+  }
+  if (!chatUserId) return { error: "请先在 SaleSmartly 打开一个客户对话" };
+
+  // 2. 取请求模板
+  var tplRes = await chrome.storage.local.get(["msgListTemplates"]);
+  var template = tplRes.msgListTemplates && tplRes.msgListTemplates[chatUserId];
+
+  // 3. 拉完整历史（失败则 incomplete）
+  var fullList = null;
+  var incomplete = false;
+  if (template) {
+    try { fullList = await replayViaContent(template); }
+    catch (e) { console.error("[SS-Listener] 重放失败，降级:", e); fullList = null; incomplete = true; }
+  } else {
+    incomplete = true;
+  }
+
+  // 4. 组消息列表：优先 fullList，否则降级用已存消息
+  var chatMsgs = [];
+  if (fullList && fullList.length) {
+    fullList.forEach(function (item) {
+      var rec = parseAPIMessage(item, { pageUrl: "" });
+      if (rec && rec.message) chatMsgs.push(rec);
+    });
+  } else {
+    var stored = await getMessages(2000);
+    chatMsgs = stored.filter(function (m) { return m.chat_user_id === chatUserId && m.message; });
+  }
+  if (!chatMsgs.length) {
+    return { error: incomplete ? "无请求模板且无已抓取消息，请先在 SaleSmartly 打开该客户对话" : "无对话记录" };
+  }
+
+  // 5. 排序 + 截断（保留最早 20 条 + 最近大头，上限 60k 字符）
+  chatMsgs.sort(function (a, b) { return (a.timestamp || 0) - (b.timestamp || 0); });
+  var contextLines = chatMsgs.map(function (m) {
+    return "[" + (m.sender === "agent" ? "客服" : "客户") + "] " + (m.message || "");
+  });
+  var contextText = contextLines.join("\n");
+  var truncated = false;
+  var MAX = 60000;
+  if (contextText.length > MAX) {
+    truncated = true;
+    var firstPart = contextLines.slice(0, 20).join("\n");
+    var tail = contextText.slice(-(MAX - firstPart.length - 50));
+    contextText = firstPart + "\n…(中间部分省略)…\n" + tail;
+  }
+
+  // 客户名
+  var customerName = "";
+  for (var j = chatMsgs.length - 1; j >= 0; j--) {
+    if (chatMsgs[j].customer_name) { customerName = chatMsgs[j].customer_name; break; }
+  }
+
+  // 6. 读字段模板
+  var fieldsText = "";
+  try {
+    var r = await fetch(chrome.runtime.getURL("profile-template.md"));
+    fieldsText = (await r.text()).trim() || DEFAULT_FIELDS;
+  } catch (e) { fieldsText = DEFAULT_FIELDS; }
+
+  // 7. 调 AI
+  var systemPrompt = "你是跨境游客服需求分析助手。从客服与客户的对话中提取客户需求档案，只根据对话中明确出现或能合理推断的信息，不要编造。";
+  var userPrompt = "请按下面的字段列表逐行提取客户需求档案。\n规则：1) 未提及的字段填\"未提及\"；2) 是/否类字段能从上下文判断就判断，判断不出填\"未提及\"；3) 严格只输出\"字段: 值\"格式，每行一个字段，字段名与下面给出的一致（不要带括号提示），不要输出任何多余解释或前后缀。\n\n字段列表：\n" + fieldsText + "\n\n对话上下文：\n" + contextText;
+
+  var response = await fetch(AI_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + AI_API_KEY },
+    body: JSON.stringify({
+      model: AI_API_MODEL,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 500,
+    }),
+  });
+  if (!response.ok) {
+    var errText = await response.text();
+    return { error: "AI API错误: " + response.status + " " + errText };
+  }
+  var data = await response.json();
+  var aiContent = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
+
+  // 8. 解析
+  var fields = parseProfileFields(aiContent, fieldsText);
+
+  // 9. 组装
+  var rawText = Object.keys(fields).map(function (label) { return label + ": " + fields[label]; }).join("\n");
+  return {
+    fields: fields,
+    rawText: rawText,
+    chatUserId: chatUserId,
+    customerName: customerName,
+    truncated: truncated,
+    incomplete: incomplete,
+    savedAt: new Date().toLocaleString("zh-CN"),
+  };
 }
