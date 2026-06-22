@@ -88,6 +88,7 @@
   <div class="tab-bar">
     <div class="tab active" data-tab="current">当前对话</div>
     <div class="tab" data-tab="history">历史记录</div>
+    <div class="tab" data-tab="profile">客户档案</div>
   </div>
 
   <!-- 当前对话 -->
@@ -112,6 +113,22 @@
         <button class="btn" id="btnGetUser">抓取并发送</button>
       </div>
       <div id="userInfoContent"></div>
+    </div>
+  </div>
+
+  <!-- 客户档案 -->
+  <div class="panel" id="panelProfile">
+    <div class="ai-panel">
+      <div class="ai-toolbar">
+        <div class="ai-info" id="profileInfo">点击"生成档案"</div>
+        <button class="btn primary" id="btnGetProfile">生成档案</button>
+      </div>
+      <div id="profileContent">
+        <div class="empty">
+          <div>打开客户对话后，点击"生成档案"</div>
+          <div class="hint">AI 从完整对话抽取需求档案</div>
+        </div>
+      </div>
     </div>
   </div>
 
