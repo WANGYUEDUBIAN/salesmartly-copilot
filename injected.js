@@ -280,6 +280,7 @@
   var REMARK_SELECTORS = [
     'textarea[placeholder*="客户备注"]',
     'textarea[placeholder*="备注"]',
+    'textarea.arco-textarea',
     'textarea[placeholder*="remark" i]',
     'textarea[class*="remark" i]',
     'textarea[class*="note" i]',
@@ -300,12 +301,39 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  function fillRemark(text) {
+  // 备注：SaleSmartly 备注区默认是“预览态” div.edit-textarea__preview（只读），点它才切换成可编辑 textarea。
+  // 这里先自动点开预览态、轮询等 textarea 出现再填值，免去用户手动点页面（手动点会让扩展弹窗关闭）。
+  async function fillRemark(text) {
     var el = findRemarkEl();
+    if (!el) {
+      var preview = document.querySelector('.edit-textarea__preview');
+      if (preview) { try { preview.click(); } catch (e) {} }
+      // Vue 切换编辑态是异步的（nextTick），轮询等待 textarea 出现（最多约 1.5s）
+      for (var i = 0; i < 30; i++) {
+        await new Promise(function (r) { setTimeout(r, 50); });
+        el = findRemarkEl();
+        if (el) break;
+      }
+    }
     if (!el) return false;
     try { el.focus(); } catch (e) {}
     setNativeValue(el, text);
-    try { el.blur(); } catch (e) {}
+    // 轮询等“确认(勾)”按钮出现并点击保存
+    var root = el.closest('[class*="edit-textarea"]');
+    var saveBtn = null;
+    for (var j = 0; j < 20; j++) {
+      await new Promise(function (r) { setTimeout(r, 50); });
+      saveBtn = (root && root.querySelector('.icon-confirm-circle')) || document.querySelector('.icon-confirm-circle');
+      if (saveBtn) break;
+    }
+    if (saveBtn) {
+      // 优先点它的按钮/包裹父元素（比点 SVG 本身更可靠触发 Vue @click）
+      var clickTarget = saveBtn.closest('button, [role="button"]') || saveBtn.parentElement || saveBtn;
+      try { clickTarget.click(); } catch (e) {}
+      console.log("[SS-DBG-FILL] 已点保存:", clickTarget.tagName, clickTarget.className);
+    } else {
+      console.log("[SS-DBG-FILL] 未找到 .icon-confirm-circle");
+    }
     return true;
   }
 
@@ -313,8 +341,9 @@
     if (event.source !== window) return;
     var m = event.data;
     if (m && m.type === "__ss_fill_remark") {
-      var ok = fillRemark(m.text);
-      window.postMessage({ type: "__ss_fill_remark_result", ok: ok, timestamp: Date.now() }, "*");
+      fillRemark(m.text).then(function (ok) {
+        window.postMessage({ type: "__ss_fill_remark_result", ok: ok, timestamp: Date.now() }, "*");
+      });
     }
   });
 
